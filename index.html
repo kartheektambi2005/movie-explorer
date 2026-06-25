@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Movie Explorer</title>
+
+    <link
+        rel="stylesheet"
+        href="./style.css"
+    >
+
+    <link
+        rel="preconnect"
+        href="https://fonts.googleapis.com"
+    >
+
+    <link
+        rel="preconnect"
+        href="https://fonts.gstatic.com"
+        crossorigin
+    >
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet"
+    >
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="container header-content">
+
+            <h1 class="logo">
+                🎬 Movie Explorer
+            </h1>
+
+            <button
+                id="themeToggle"
+                class="theme-btn"
+                aria-label="Toggle Theme"
+            >
+                🌙
+            </button>
+
+        </div>
+    </header>
+
+    <!-- Search -->
+    <section class="search-section">
+        <div class="container">
+
+            <form
+                id="searchForm"
+                class="search-form"
+            >
+
+                <input
+                    type="text"
+                    id="searchInput"
+                    placeholder="Search movies..."
+                    autocomplete="off"
+                    required
+                >
+
+                <button type="submit">
+                    Search
+                </button>
+
+            </form>
+
+            <!-- Search History -->
+            <div class="history-wrapper">
+                <h3>Recent Searches</h3>
+
+                <div
+                    id="searchHistory"
+                    class="history-list"
+                ></div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="stats-section">
+        <div class="container stats-grid">
+
+            <div class="stat-card">
+                <h3>Favorites</h3>
+                <p id="favoriteCount">0</p>
+            </div>
+
+            <div class="stat-card">
+                <h3>Watchlist</h3>
+                <p id="watchlistCount">0</p>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Tabs -->
+    <section class="tabs-section">
+        <div class="container">
+
+            <div class="tabs">
+
+                <button
+                    class="tab-btn active"
+                    data-tab="movies"
+                >
+                    Movies
+                </button>
+
+                <button
+                    class="tab-btn"
+                    data-tab="favorites"
+                >
+                    Favorites
+                </button>
+
+                <button
+                    class="tab-btn"
+                    data-tab="watchlist"
+                >
+                    Watchlist
+                </button>
+
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Loading -->
+    <section
+        id="loader"
+        class="loader hidden"
+    >
+        <div class="spinner"></div>
+    </section>
+
+    <!-- Error -->
+    <section
+        id="errorState"
+        class="message hidden"
+    >
+        <h2>Something went wrong.</h2>
+    </section>
+
+    <!-- Empty -->
+    <section
+        id="emptyState"
+        class="message hidden"
+    >
+        <h2>No movies found.</h2>
+    </section>
+
+    <!-- Movies -->
+    <main class="container">
+
+        <div
+            id="moviesGrid"
+            class="movies-grid"
+        ></div>
+
+    </main>
+
+    <!-- Movie Details Modal -->
+    <div
+        id="movieModal"
+        class="modal hidden"
+        aria-hidden="true"
+    >
+
+        <div
+            class="modal-content"
+            role="dialog"
+            aria-modal="true"
+        >
+
+            <button
+                id="closeModal"
+                class="close-btn"
+            >
+                ×
+            </button>
+
+            <div
+                id="modalBody"
+                class="modal-body"
+            ></div>
+
+        </div>
+
+    </div>
+
+    <script src="./app.js"></script>
+
+</body>
+</html>
