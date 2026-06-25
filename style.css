@@ -418,6 +418,13 @@ img {
 
     animation: spin 1s linear infinite;
 }
+.footer{
+    text-align:center;
+    padding:12px;
+    color:#777;
+    font-size:13px;
+    background:#111;
+}
 
 @keyframes spin {
     to {
