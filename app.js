@@ -132,7 +132,6 @@ async function getMovieDetails(id) {
       <div class="modal-info">
 
         <h2>${movie.Title}</h2>
-
         <p><strong>Plot:</strong> ${movie.Plot}</p>
 
         <p><strong>Genre:</strong> ${movie.Genre}</p>
