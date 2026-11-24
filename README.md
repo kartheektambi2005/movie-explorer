@@ -37,7 +37,8 @@ Built with plain HTML, CSS and JavaScript (ES modules) on top of the [OMDb API](
 
 ```
 index.html        page markup (+ tiny inline script that applies the theme before first paint)
-style.css         theme tokens, layout, components
+css/
+  style.css       theme tokens, layout, components
 assets/           favicon and fallback poster
 js/
   config.js       OMDb API key and base URL: the only place the key lives
@@ -92,14 +93,6 @@ Then open <http://localhost:8000>.
 1. Push the repository to GitHub.
 2. Go to **Settings, Pages**, choose **Deploy from a branch**, pick `main` and `/ (root)`, then save.
 3. After a minute the site is live at `https://<your-username>.github.io/movie-explorer/`.
-
-## Formatting
-
-A minimal [`.prettierrc.json`](.prettierrc.json) is included for the JavaScript files:
-
-```bash
-npx prettier --write "js/*.js"
-```
 
 ## Credits
 
