@@ -127,5 +127,5 @@ export async function getMovieDetails(id, { signal } = {}) {
   if (data.Response === "False") {
     throw new ApiError(data.Error || "Movie not found.", "api");
   }
-  return fromOmdb(data);
+  return { ...fromOmdb(data), id };
 }

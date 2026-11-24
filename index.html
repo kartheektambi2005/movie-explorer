@@ -84,8 +84,21 @@
             ></p>
 
             <!-- Search History -->
-            <div class="history-wrapper">
-                <h3>Recent Searches</h3>
+            <div
+                id="historyWrapper"
+                class="history-wrapper hidden"
+            >
+                <div class="history-header">
+                    <h3>Recent Searches</h3>
+
+                    <button
+                        id="clearHistoryBtn"
+                        class="link-btn"
+                        type="button"
+                    >
+                        Clear
+                    </button>
+                </div>
 
                 <div
                     id="searchHistory"
@@ -102,12 +115,12 @@
 
             <div class="stat-card">
                 <h3>Favorites</h3>
-                <p id="favoriteCount">0</p>
+                <p id="favoriteCount" aria-live="polite">0</p>
             </div>
 
             <div class="stat-card">
                 <h3>Watchlist</h3>
-                <p id="watchlistCount">0</p>
+                <p id="watchlistCount" aria-live="polite">0</p>
             </div>
 
         </div>
@@ -218,6 +231,7 @@
             class="modal-content"
             role="dialog"
             aria-modal="true"
+            aria-labelledby="modalTitle"
         >
 
             <button
@@ -238,6 +252,14 @@
         </div>
 
     </div>
+    <!-- Toast messages -->
+    <div
+        id="toastRegion"
+        class="toast-region"
+        role="status"
+        aria-live="polite"
+    ></div>
+
     <footer class="footer">
         &copy; 2026 Movie-Explorer by Tambi Kartheek. Data from
         <a

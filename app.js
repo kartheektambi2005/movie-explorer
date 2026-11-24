@@ -25,7 +25,11 @@ const themeToggle = document.getElementById("themeToggle");
 const favoriteCount = document.getElementById("favoriteCount");
 const watchlistCount = document.getElementById("watchlistCount");
 
+const historyWrapper = document.getElementById("historyWrapper");
 const searchHistoryContainer = document.getElementById("searchHistory");
+const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+
+const toastRegion = document.getElementById("toastRegion");
 
 const tabButtons = document.querySelectorAll(".tab-btn");
 
@@ -33,12 +37,20 @@ const FAVORITES_KEY = "movie_favorites";
 const WATCHLIST_KEY = "movie_watchlist";
 const HISTORY_KEY = "movie_search_history";
 const THEME_KEY = "movie_theme";
+const TAB_KEY = "movie_active_tab";
 
+const TABS = ["movies", "favorites", "watchlist"];
+const LIST_LABELS = { [FAVORITES_KEY]: "Favorites", [WATCHLIST_KEY]: "Watchlist" };
+
+const DEFAULT_QUERY = "Avengers"; // shown on first load; not saved to Recent Searches
 const MIN_QUERY_LENGTH = 2;
 const MAX_QUERY_LENGTH = 100;
 const SEARCH_DEBOUNCE_MS = 500;
 const PAGE_SIZE = 10; // OMDb returns 10 results per page
-const POSTER_PLACEHOLDER = "https://via.placeholder.com/300x450";
+const MAX_HISTORY = 5;
+const TOAST_MS = 3000;
+const DETAIL_CONCURRENCY = 3;
+const FALLBACK_POSTER = "./assets/no-poster.svg";
 
 let activeTab = "movies";
 
@@ -124,6 +136,22 @@ function setStorage(key, value) {
   }
 }
 
+function getSetting(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function setSetting(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable - the setting just won't persist */
+  }
+}
+
 /* ===========================
    SAFE DOM HELPERS
 =========================== */
@@ -140,14 +168,44 @@ function el(tag, { className, text, attrs } = {}, children = []) {
   return node;
 }
 
-// Only allow http(s) poster URLs coming from the API.
-function posterUrl(poster) {
+function isHttpUrl(value) {
   try {
-    const url = new URL(poster);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : POSTER_PLACEHOLDER;
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
   } catch {
-    return POSTER_PLACEHOLDER;
+    return false;
   }
+}
+
+// Poster image that falls back to a local placeholder when OMDb has no poster
+// ("N/A") or the image fails to load.
+function createPoster(movie, className) {
+  const hasPoster = isHttpUrl(movie.poster);
+
+  const img = el("img", {
+    className,
+    attrs: {
+      src: hasPoster ? movie.poster : FALLBACK_POSTER,
+      alt: hasPoster ? `${movie.title} poster` : `No poster available for ${movie.title}`,
+      loading: "lazy",
+    },
+  });
+
+  img.addEventListener("error", () => {
+    if (img.getAttribute("src") === FALLBACK_POSTER) return;
+    img.setAttribute("src", FALLBACK_POSTER);
+    img.alt = `No poster available for ${movie.title}`;
+  });
+
+  return img;
+}
+
+function externalLink(href, text, className) {
+  return el("a", {
+    className,
+    text,
+    attrs: { href, target: "_blank", rel: "noopener noreferrer" },
+  });
 }
 
 function debounce(fn, delay) {
@@ -163,6 +221,16 @@ function debounce(fn, delay) {
 function showHint(message) {
   searchHint.textContent = message;
   searchHint.classList.toggle("hidden", !message);
+}
+
+function showToast(message, { error = false } = {}) {
+  const toast = el("div", { className: error ? "toast is-error" : "toast", text: message });
+  toastRegion.append(toast);
+
+  // Keep at most three on screen.
+  while (toastRegion.children.length > 3) toastRegion.firstElementChild.remove();
+
+  setTimeout(() => toast.remove(), TOAST_MS);
 }
 
 /* ===========================
@@ -214,12 +282,12 @@ async function loadResults(query, page, { record = false } = {}) {
     if (append) {
       const known = new Set(search.movies.map((m) => m.id));
       const fresh = result.movies.filter((m) => !known.has(m.id));
-      search.movies = search.movies.concat(fresh);
+      search.movies = search.movies.concat(fresh.map(withKnownDetails));
       search.page = page;
       // Nothing new came back, so stop offering "Load more".
       search.total = fresh.length ? result.total : search.movies.length;
     } else {
-      search.movies = result.movies;
+      search.movies = result.movies.map(withKnownDetails);
       search.page = page;
       search.total = result.total;
       search.message = result.message;
@@ -275,6 +343,136 @@ const debouncedSearch = debounce((raw) => {
 }, SEARCH_DEBOUNCE_MS);
 
 /* ===========================
+   MOVIE DETAILS (cards + modal share one cache)
+=========================== */
+
+const detailsCache = new Map(); // id -> full movie details
+const failedDetails = new Set(); // ids whose rating/genre lookup failed
+const detailQueue = [];
+let activeDetailRequests = 0;
+
+// Fills the empty fields of `base` from `extra`; values `base` already has win.
+function mergeMovie(base, extra) {
+  return Object.fromEntries(MOVIE_FIELDS.map((field) => [field, base[field] || extra[field] || ""]));
+}
+
+function withKnownDetails(movie) {
+  const known = detailsCache.get(movie.id);
+  return known ? mergeMovie(movie, known) : movie;
+}
+
+function findMovie(id) {
+  const found =
+    search.movies.find((m) => m.id === id) ||
+    getStorage(FAVORITES_KEY).find((m) => m.id === id) ||
+    getStorage(WATCHLIST_KEY).find((m) => m.id === id);
+  return found ? withKnownDetails(found) : null;
+}
+
+// The search endpoint has no rating or genre, so cards fetch them on demand.
+// Requests are queued (a few at a time) and skipped if the card is gone.
+function queueDetails(id, isNeeded) {
+  return new Promise((resolve, reject) => {
+    detailQueue.push({ id, isNeeded, resolve, reject });
+    pumpDetailQueue();
+  });
+}
+
+function pumpDetailQueue() {
+  while (activeDetailRequests < DETAIL_CONCURRENCY && detailQueue.length) {
+    const job = detailQueue.shift();
+
+    if (detailsCache.has(job.id)) {
+      job.resolve(detailsCache.get(job.id));
+      continue;
+    }
+    if (!job.isNeeded()) {
+      job.resolve(null);
+      continue;
+    }
+
+    activeDetailRequests++;
+    getMovieDetails(job.id)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeDetailRequests--;
+        pumpDetailQueue();
+      });
+  }
+}
+
+// Stores fetched details and propagates them to search results, saved lists and cards.
+function applyDetails(details) {
+  detailsCache.set(details.id, details);
+  failedDetails.delete(details.id);
+
+  search.movies = search.movies.map((m) => (m.id === details.id ? mergeMovie(m, details) : m));
+
+  [FAVORITES_KEY, WATCHLIST_KEY].forEach((key) => {
+    const list = getStorage(key);
+    if (list.some((m) => m.id === details.id)) {
+      setStorage(
+        key,
+        list.map((m) => (m.id === details.id ? mergeMovie(m, details) : m))
+      );
+    }
+  });
+
+  document.querySelectorAll(".movie-meta").forEach((node) => {
+    if (node.dataset.id === details.id) renderMeta(node, details.id);
+  });
+}
+
+const cardObserver =
+  "IntersectionObserver" in window
+    ? new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            cardObserver.unobserve(entry.target);
+            enrichCard(entry.target);
+          });
+        },
+        { rootMargin: "200px" }
+      )
+    : null;
+
+function enrichCard(card) {
+  const id = card.dataset.id;
+  const movie = findMovie(id);
+  if (!movie || movie.rating || movie.genre) return;
+
+  queueDetails(id, () => card.isConnected)
+    .then((details) => {
+      if (details) applyDetails(details);
+    })
+    .catch((error) => {
+      console.warn("Could not load rating/genre", error);
+      failedDetails.add(id);
+      document.querySelectorAll(".movie-meta").forEach((node) => {
+        if (node.dataset.id === id) renderMeta(node, id);
+      });
+    });
+}
+
+// Rating and genre line on a card.
+function renderMeta(node, id) {
+  const movie = findMovie(id);
+  node.replaceChildren();
+  node.classList.remove("is-loading");
+
+  if (movie && (movie.rating || movie.genre)) {
+    if (movie.rating) node.append(el("span", { className: "movie-rating", text: `★ ${movie.rating}` }));
+    if (movie.genre) node.append(el("span", { className: "movie-genre", text: movie.genre }));
+  } else if (failedDetails.has(id)) {
+    node.textContent = "Rating and genre unavailable";
+  } else {
+    node.classList.add("is-loading");
+    node.textContent = "Loading rating…";
+  }
+}
+
+/* ===========================
    RENDERING
 =========================== */
 
@@ -324,56 +522,126 @@ function renderEmpty() {
 }
 
 function renderMovies(movies) {
+  cardObserver?.disconnect();
   moviesGrid.replaceChildren();
 
+  const state = getListState();
+
   movies.forEach((movie) => {
-    const card = el("article", { className: "movie-card" }, [
-      el("img", {
-        className: "movie-poster",
-        attrs: { src: posterUrl(movie.poster), alt: `${movie.title} poster` },
-      }),
+    const shown = withKnownDetails(movie);
+
+    const meta = el("div", { className: "movie-meta", attrs: { "data-id": shown.id } });
+    renderMeta(meta, shown.id);
+
+    const card = el("article", { className: "movie-card", attrs: { "data-id": shown.id } }, [
+      createPoster(shown, "movie-poster"),
       el("div", { className: "movie-content" }, [
-        el("h3", { className: "movie-title", text: movie.title }),
-        el("p", { className: "movie-info", text: `Year: ${movie.year}` }),
-        el("p", { className: "movie-info", text: `Type: ${movie.type}` }),
-        el("p", { className: "movie-info", text: `IMDb ID: ${movie.id}` }),
+        el("h3", { className: "movie-title", text: shown.title }),
+        el("p", {
+          className: "movie-info",
+          text: [shown.year, shown.type].filter(Boolean).join(" · "),
+        }),
+        meta,
         el("div", { className: "movie-actions" }, [
-          actionButton("details", "Details", movie.id),
-          actionButton("favorite", "Favorite", movie.id),
-          actionButton("watchlist", "Watchlist", movie.id),
+          actionButton("details", "Details", shown, state),
+          actionButton("favorite", "Favorite", shown, state),
+          actionButton("watchlist", "Watchlist", shown, state),
         ]),
       ]),
     ]);
 
     moviesGrid.appendChild(card);
+
+    if (cardObserver) cardObserver.observe(card);
+    else enrichCard(card);
   });
 }
 
-function actionButton(action, label, id) {
-  return el("button", {
+function actionButton(action, label, movie, state) {
+  const button = el("button", {
     className: `action-btn ${action}-btn`,
     text: label,
-    attrs: { type: "button", "data-action": action, "data-id": id },
+    attrs: { type: "button", "data-action": action, "data-id": movie.id },
   });
+
+  if (action === "details") {
+    button.setAttribute("aria-label", `View details for ${movie.title}`);
+  } else {
+    applyActionState(button, movie, state);
+  }
+  return button;
 }
 
 /* ===========================
    FAVORITES / WATCHLIST
 =========================== */
 
-function addToList(key, movieId) {
-  const list = getStorage(key);
+function getListState() {
+  return {
+    favorites: new Set(getStorage(FAVORITES_KEY).map((m) => m.id)),
+    watchlist: new Set(getStorage(WATCHLIST_KEY).map((m) => m.id)),
+  };
+}
 
-  if (list.some((m) => m.id === movieId)) return;
+// Favorite / Watchlist buttons act as toggles: label and accessible name follow the saved state.
+function applyActionState(button, movie, state) {
+  const isFavorite = button.dataset.action === "favorite";
+  const listName = isFavorite ? "favorites" : "watchlist";
+  const inList = state[listName].has(movie.id);
+  const onThisTab = activeTab === listName;
 
-  const movie = getVisibleMovies().find((m) => m.id === movieId);
+  let label = isFavorite ? "Favorite" : "Watchlist";
+  if (inList) label = onThisTab ? "Remove" : isFavorite ? "Favorited" : "Added";
+
+  button.textContent = label;
+  button.classList.toggle("is-active", inList);
+  button.setAttribute("aria-label", `${inList ? "Remove" : "Add"} ${movie.title} ${inList ? "from" : "to"} ${listName}`);
+}
+
+function syncActionButtons(id) {
+  const state = getListState();
+  const movie = findMovie(id);
   if (!movie) return;
 
-  list.push(movie);
+  document.querySelectorAll(".movie-card").forEach((card) => {
+    if (card.dataset.id !== id) return;
+    card.querySelectorAll("button[data-action]").forEach((button) => {
+      if (button.dataset.action !== "details") applyActionState(button, movie, state);
+    });
+  });
+}
 
-  setStorage(key, list);
+function toggleInList(key, id) {
+  const list = getStorage(key);
+  const index = list.findIndex((m) => m.id === id);
+  const label = LIST_LABELS[key];
+
+  const movie = findMovie(id);
+  if (!movie) return;
+
+  const removing = index !== -1;
+  if (removing) list.splice(index, 1);
+  else list.push(movie);
+
+  if (!setStorage(key, list)) {
+    showToast("Couldn't save: browser storage is unavailable.", { error: true });
+    return;
+  }
 
   updateCounts();
+  showToast(removing ? `Removed "${movie.title}" from ${label}` : `Added "${movie.title}" to ${label}`);
+
+  const tabKey = activeTab === "favorites" ? FAVORITES_KEY : activeTab === "watchlist" ? WATCHLIST_KEY : null;
+
+  if (removing && tabKey === key) {
+    // The card disappears from this tab: re-render and keep keyboard focus nearby.
+    const position = [...moviesGrid.children].findIndex((card) => card.dataset.id === id);
+    render();
+    const next = moviesGrid.children[Math.min(position, moviesGrid.children.length - 1)];
+    (next?.querySelector("button") ?? document.querySelector(".tab-btn.active")).focus();
+  } else {
+    syncActionButtons(id);
+  }
 }
 
 function updateCounts() {
@@ -386,23 +654,24 @@ function updateCounts() {
    SEARCH HISTORY
 =========================== */
 
-function saveSearchHistory(query) {
-  let history = getStorage(HISTORY_KEY, normalizeString);
+function loadHistory() {
+  return getStorage(HISTORY_KEY, normalizeString).slice(0, MAX_HISTORY);
+}
 
-  history = history.filter((item) => item !== query);
+function saveSearchHistory(query) {
+  const history = loadHistory().filter((item) => item.toLowerCase() !== query.toLowerCase());
 
   history.unshift(query);
 
-  history = history.slice(0, 8);
-
-  setStorage(HISTORY_KEY, history);
+  setStorage(HISTORY_KEY, history.slice(0, MAX_HISTORY));
 
   renderSearchHistory();
 }
 
 function renderSearchHistory() {
-  const history = getStorage(HISTORY_KEY, normalizeString);
+  const history = loadHistory();
 
+  historyWrapper.classList.toggle("hidden", history.length === 0);
   searchHistoryContainer.replaceChildren();
 
   history.forEach((item) => {
@@ -422,19 +691,26 @@ function renderSearchHistory() {
   });
 }
 
+function clearSearchHistory() {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    /* storage unavailable - nothing to clear */
+  }
+  renderSearchHistory();
+  showToast("Recent searches cleared");
+  searchInput.focus();
+}
+
 /* ===========================
    THEME
 =========================== */
 
 function loadTheme() {
-  let theme = null;
-  try {
-    theme = localStorage.getItem(THEME_KEY);
-  } catch {
-    /* storage unavailable - use default theme */
-  }
+  const saved = getSetting(THEME_KEY);
+  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
 
-  if (theme === "dark") {
+  if (saved === "dark" || (saved === null && prefersDark)) {
     document.body.classList.add("dark");
     themeToggle.textContent = "☀️";
   }
@@ -445,11 +721,7 @@ function toggleTheme() {
 
   const dark = document.body.classList.contains("dark");
 
-  try {
-    localStorage.setItem(THEME_KEY, dark ? "dark" : "light");
-  } catch {
-    /* storage unavailable - theme just won't persist */
-  }
+  setSetting(THEME_KEY, dark ? "dark" : "light");
 
   themeToggle.textContent = dark ? "☀️" : "🌙";
 }
@@ -480,6 +752,13 @@ async function showDetails(id) {
   const controller = new AbortController();
   detailsController = controller;
 
+  const cached = detailsCache.get(id);
+  if (cached) {
+    renderModalMovie(cached);
+    openModal();
+    return;
+  }
+
   modalBody.replaceChildren(
     el("div", { className: "modal-status", attrs: { role: "status" } }, [
       el("div", { className: "spinner", attrs: { "aria-hidden": "true" } }),
@@ -492,23 +771,8 @@ async function showDetails(id) {
     const movie = await getMovieDetails(id, { signal: controller.signal });
     if (controller !== detailsController) return;
 
-    modalBody.replaceChildren(
-      el("img", {
-        className: "modal-poster",
-        attrs: { src: posterUrl(movie.poster), alt: `${movie.title} poster` },
-      }),
-      el("div", { className: "modal-info" }, [
-        el("h2", { text: movie.title }),
-        detailRow("Plot", movie.plot),
-        detailRow("Genre", movie.genre),
-        detailRow("Runtime", movie.runtime),
-        detailRow("Director", movie.director),
-        detailRow("Actors", movie.actors),
-        detailRow("IMDb Rating", movie.rating),
-        detailRow("Release Date", movie.released),
-        detailRow("Awards", movie.awards),
-      ])
-    );
+    applyDetails(movie);
+    renderModalMovie(movie);
   } catch (error) {
     if (isAborted(error) || controller !== detailsController) return;
     console.error(error);
@@ -522,7 +786,7 @@ async function showDetails(id) {
 
     modalBody.replaceChildren(
       el("div", { className: "modal-status", attrs: { role: "alert" } }, [
-        el("h2", { text: "Couldn't load details." }),
+        el("h2", { text: "Couldn't load details.", attrs: { id: "modalTitle" } }),
         el("p", { text: error.message }),
         retry,
       ])
@@ -530,8 +794,50 @@ async function showDetails(id) {
   }
 }
 
-function detailRow(label, value) {
-  return el("p", {}, [el("strong", { text: `${label}: ` }), document.createTextNode(value || "Not available")]);
+function detailRow(label, value, { required = false } = {}) {
+  if (!value && !required) return null;
+
+  return el("div", { className: "detail-row" }, [
+    el("h3", { text: label }),
+    el("p", { text: value || "Not available" }),
+  ]);
+}
+
+function renderModalMovie(movie) {
+  const facts = el("div", { className: "modal-facts" });
+  facts.append(
+    el("span", {
+      className: "rating-badge",
+      text: movie.rating ? `★ ${movie.rating} / 10` : "No rating",
+      attrs: { "aria-label": movie.rating ? `IMDb rating ${movie.rating} out of 10` : "No IMDb rating" },
+    }),
+    el("span", { text: movie.runtime || "Runtime not available" })
+  );
+  if (movie.released) facts.append(el("span", { text: `Released ${movie.released}` }));
+
+  const genres = el("ul", { className: "genre-list", attrs: { "aria-label": "Genres" } });
+  const genreNames = movie.genre ? movie.genre.split(",").map((g) => g.trim()) : [];
+  genreNames.forEach((name) => genres.append(el("li", { text: name })));
+  if (!genreNames.length) genres.append(el("li", { text: "Genre not available" }));
+
+  const info = el("div", { className: "modal-info" }, [
+    el("h2", { attrs: { id: "modalTitle" } }, [
+      document.createTextNode(movie.title),
+      movie.year ? el("span", { className: "modal-year", text: ` (${movie.year})` }) : "",
+    ]),
+    facts,
+    genres,
+    detailRow("Plot", movie.plot, { required: true }),
+    detailRow("Cast", movie.actors, { required: true }),
+    detailRow("Director", movie.director),
+    detailRow("Awards", movie.awards),
+  ].filter(Boolean));
+
+  if (/^tt\d+$/.test(movie.id)) {
+    info.append(externalLink(`https://www.imdb.com/title/${movie.id}/`, "View on IMDb", "imdb-link"));
+  }
+
+  modalBody.replaceChildren(createPoster(movie, "modal-poster"), info);
 }
 
 /* ===========================
@@ -539,13 +845,22 @@ function detailRow(label, value) {
 =========================== */
 
 function switchTab(tab) {
+  if (!TABS.includes(tab)) tab = "movies";
   activeTab = tab;
+  setSetting(TAB_KEY, tab);
 
   tabButtons.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.tab === tab);
   });
 
   render();
+}
+
+// Lazily loads the default results the first time the Movies tab is opened.
+function ensureMoviesLoaded() {
+  if (activeTab === "movies" && search.status === "idle") {
+    loadResults(DEFAULT_QUERY, 1);
+  }
 }
 
 /* ===========================
@@ -568,6 +883,8 @@ retryBtn.addEventListener("click", () => search.retry?.());
 
 loadMoreBtn.addEventListener("click", loadMore);
 
+clearHistoryBtn.addEventListener("click", clearSearchHistory);
+
 themeToggle.addEventListener("click", toggleTheme);
 
 closeModal.addEventListener("click", closeMovieModal);
@@ -587,6 +904,7 @@ document.addEventListener("keydown", (e) => {
 tabButtons.forEach((btn) => {
   btn.addEventListener("click", () => {
     switchTab(btn.dataset.tab);
+    ensureMoviesLoaded();
   });
 });
 
@@ -597,8 +915,8 @@ moviesGrid.addEventListener("click", (e) => {
   const { action, id } = button.dataset;
 
   if (action === "details") showDetails(id);
-  if (action === "favorite") addToList(FAVORITES_KEY, id);
-  if (action === "watchlist") addToList(WATCHLIST_KEY, id);
+  if (action === "favorite") toggleInList(FAVORITES_KEY, id);
+  if (action === "watchlist") toggleInList(WATCHLIST_KEY, id);
 });
 
 function init() {
@@ -608,7 +926,9 @@ function init() {
 
   renderSearchHistory();
 
-  loadResults("Avengers", 1, { record: true });
+  switchTab(getSetting(TAB_KEY));
+
+  ensureMoviesLoaded();
 }
 
 init();

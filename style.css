@@ -156,8 +156,22 @@ img {
     margin-top: 20px;
 }
 
-.history-wrapper h3 {
+.history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
     margin-bottom: 12px;
+}
+
+.link-btn {
+    background: none;
+    color: var(--primary);
+    font-size: .9rem;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 6px;
+    text-decoration: underline;
 }
 
 .history-list {
@@ -273,6 +287,7 @@ img {
 .movie-poster {
     height: 370px;
     object-fit: cover;
+    background: var(--border);
 }
 
 .movie-content {
@@ -288,6 +303,28 @@ img {
     color: var(--text-secondary);
     font-size: .9rem;
     margin-bottom: 6px;
+}
+
+.movie-meta {
+    font-size: .9rem;
+    margin-bottom: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    min-height: 1.4em;
+}
+
+.movie-rating {
+    font-weight: 600;
+}
+
+.movie-genre {
+    color: var(--text-secondary);
+}
+
+.movie-meta.is-loading {
+    color: var(--text-secondary);
+    font-style: italic;
 }
 
 .movie-actions {
@@ -319,6 +356,12 @@ img {
 
 .favorite-btn {
     background: #eab308;
+}
+
+.action-btn.is-active {
+    outline: 2px solid currentColor;
+    outline-offset: -4px;
+    font-weight: 600;
 }
 
 .watchlist-btn {
@@ -390,14 +433,11 @@ img {
 
 .modal-poster {
     border-radius: 12px;
-}
-
-.modal-info h2 {
-    margin-bottom: 15px;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
 }
 
 .modal-info p {
-    margin-bottom: 10px;
     line-height: 1.7;
 }
 
@@ -549,4 +589,95 @@ input:focus {
 
 .modal-status p {
     color: var(--text-secondary);
+}
+
+/* Details modal content */
+
+.modal-info h2 {
+    margin-bottom: 8px;
+    padding-right: 40px;
+}
+
+.modal-year {
+    font-weight: 400;
+    color: var(--text-secondary);
+}
+
+.modal-facts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    margin-bottom: 14px;
+}
+
+.rating-badge {
+    background: #facc15;
+    color: #1a1a1a;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 999px;
+}
+
+.genre-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    list-style: none;
+    margin-bottom: 16px;
+}
+
+.genre-list li {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 12px;
+    font-size: .85rem;
+}
+
+.modal-info h3 {
+    font-size: 1rem;
+    margin: 14px 0 4px;
+}
+
+.imdb-link {
+    display: inline-block;
+    margin-top: 16px;
+    color: var(--primary);
+    font-weight: 600;
+}
+
+/* Toasts */
+
+.toast-region {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%);
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(420px, 92%);
+    pointer-events: none;
+}
+
+.toast {
+    background: #1f2937;
+    color: #ffffff;
+    padding: 12px 16px;
+    border-radius: 10px;
+    box-shadow: 0 6px 18px var(--shadow);
+    font-size: .9rem;
+    animation: toast-in .2s ease-out;
+}
+
+.toast.is-error {
+    background: #991b1b;
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
 }
