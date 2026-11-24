@@ -1,6 +1,4 @@
-import { OMDB_API_KEY, OMDB_BASE_URL } from "./js/config.js";
-
-const API_URL = `${OMDB_BASE_URL}?apikey=${OMDB_API_KEY}`;
+import { searchMovies, getMovieDetails, isAborted, fromOmdb } from "./js/api.js";
 
 const searchForm = document.getElementById("searchForm");
 const searchInput = document.getElementById("searchInput");
@@ -10,7 +8,13 @@ const moviesGrid = document.getElementById("moviesGrid");
 
 const loader = document.getElementById("loader");
 const errorState = document.getElementById("errorState");
+const errorMessage = document.getElementById("errorMessage");
+const retryBtn = document.getElementById("retryBtn");
 const emptyState = document.getElementById("emptyState");
+const emptyTitle = document.getElementById("emptyTitle");
+const emptyMessage = document.getElementById("emptyMessage");
+const loadMoreWrap = document.getElementById("loadMoreWrap");
+const loadMoreBtn = document.getElementById("loadMoreBtn");
 
 const movieModal = document.getElementById("movieModal");
 const modalBody = document.getElementById("modalBody");
@@ -32,27 +36,65 @@ const THEME_KEY = "movie_theme";
 
 const MIN_QUERY_LENGTH = 2;
 const MAX_QUERY_LENGTH = 100;
+const SEARCH_DEBOUNCE_MS = 500;
+const PAGE_SIZE = 10; // OMDb returns 10 results per page
 const POSTER_PLACEHOLDER = "https://via.placeholder.com/300x450";
 
-let currentMovies = [];
 let activeTab = "movies";
+
+// Everything the Movies tab needs to know about the current search.
+const search = {
+  query: "",
+  page: 0,
+  total: 0,
+  movies: [],
+  status: "idle", // idle | loading | ready | empty | error
+  loadingMore: false,
+  message: "", // reason shown for an empty result
+  errorMessage: "",
+  controller: null, // AbortController of the in-flight request
+  retry: null, // re-runs the request that failed
+};
 
 /* ===========================
    SAFE STORAGE
 =========================== */
 
-function isMovie(item) {
-  return (
-    item !== null &&
-    typeof item === "object" &&
-    typeof item.imdbID === "string" &&
-    typeof item.Title === "string"
-  );
+const MOVIE_FIELDS = [
+  "id",
+  "title",
+  "year",
+  "type",
+  "poster",
+  "genre",
+  "rating",
+  "runtime",
+  "plot",
+  "actors",
+  "director",
+  "released",
+  "awards",
+];
+
+// Accepts the current movie shape and the legacy OMDb shape (Title, imdbID...)
+// that older versions of the app saved. Anything else is discarded.
+function normalizeStored(item) {
+  if (item === null || typeof item !== "object") return null;
+
+  if (typeof item.id === "string" && item.id) {
+    return Object.fromEntries(MOVIE_FIELDS.map((field) => [field, typeof item[field] === "string" ? item[field] : ""]));
+  }
+  if (typeof item.imdbID === "string" && item.imdbID) {
+    return fromOmdb(item);
+  }
+  return null;
 }
+
+const normalizeString = (item) => (typeof item === "string" && item ? item : null);
 
 // Reads a JSON array from localStorage. Never throws: unavailable storage,
 // invalid JSON or the wrong shape all fall back to an empty list.
-function getStorage(key, isValidItem = isMovie) {
+function getStorage(key, normalize = normalizeStored) {
   try {
     const raw = localStorage.getItem(key);
     if (raw === null) return [];
@@ -60,7 +102,7 @@ function getStorage(key, isValidItem = isMovie) {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error("not an array");
 
-    return parsed.filter(isValidItem);
+    return parsed.map(normalize).filter(Boolean);
   } catch (error) {
     console.warn(`Ignoring corrupted data for "${key}"`, error);
     try {
@@ -82,8 +124,6 @@ function setStorage(key, value) {
   }
 }
 
-const isString = (item) => typeof item === "string";
-
 /* ===========================
    SAFE DOM HELPERS
 =========================== */
@@ -100,44 +140,24 @@ function el(tag, { className, text, attrs } = {}, children = []) {
   return node;
 }
 
-// API values arrive as "N/A" when missing.
-function clean(value) {
-  return value && value !== "N/A" ? String(value) : "";
-}
-
 // Only allow http(s) poster URLs coming from the API.
 function posterUrl(poster) {
   try {
-    const url = new URL(clean(poster));
+    const url = new URL(poster);
     return url.protocol === "https:" || url.protocol === "http:" ? url.href : POSTER_PLACEHOLDER;
   } catch {
     return POSTER_PLACEHOLDER;
   }
 }
 
-/* ===========================
-   UI HELPERS
-=========================== */
-
-function showLoader() {
-  loader.classList.remove("hidden");
-}
-
-function hideLoader() {
-  loader.classList.add("hidden");
-}
-
-function hideStates() {
-  errorState.classList.add("hidden");
-  emptyState.classList.add("hidden");
-}
-
-function showError() {
-  errorState.classList.remove("hidden");
-}
-
-function showEmpty() {
-  emptyState.classList.remove("hidden");
+function debounce(fn, delay) {
+  let timer;
+  const debounced = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+  debounced.cancel = () => clearTimeout(timer);
+  return debounced;
 }
 
 function showHint(message) {
@@ -166,85 +186,142 @@ function validateQuery(raw) {
 }
 
 /* ===========================
-   API
+   SEARCH FLOW (API -> state -> render)
 =========================== */
 
-async function searchMovies(title) {
+// Loads one page of results. page 1 starts a new search; later pages append.
+// Any request still in flight is cancelled so a slow, stale answer can never
+// overwrite a newer one.
+async function loadResults(query, page, { record = false } = {}) {
+  search.controller?.abort();
+  const controller = new AbortController();
+  search.controller = controller;
+
+  const append = page > 1;
+  if (!append) {
+    Object.assign(search, { query, page: 0, total: 0, movies: [], message: "" });
+  }
+  search.status = append ? "ready" : "loading";
+  search.loadingMore = append;
+  search.retry = null;
+  render();
+
   try {
-    hideStates();
-    showLoader();
+    const result = await searchMovies(query, { page, signal: controller.signal });
 
-    const response = await fetch(`${API_URL}&s=${encodeURIComponent(title)}`);
+    search.loadingMore = false;
 
-    const data = await response.json();
-
-    hideLoader();
-
-    if (data.Response === "False" || !Array.isArray(data.Search)) {
-      currentMovies = [];
-      moviesGrid.replaceChildren();
-      showEmpty();
-      return;
+    if (append) {
+      const known = new Set(search.movies.map((m) => m.id));
+      const fresh = result.movies.filter((m) => !known.has(m.id));
+      search.movies = search.movies.concat(fresh);
+      search.page = page;
+      // Nothing new came back, so stop offering "Load more".
+      search.total = fresh.length ? result.total : search.movies.length;
+    } else {
+      search.movies = result.movies;
+      search.page = page;
+      search.total = result.total;
+      search.message = result.message;
     }
 
-    currentMovies = data.Search;
+    search.status = search.movies.length ? "ready" : "empty";
 
-    renderMovies(currentMovies);
-
-    saveSearchHistory(title);
+    if (record && search.movies.length) saveSearchHistory(query);
   } catch (error) {
-    hideLoader();
-    showError();
+    if (isAborted(error) || controller !== search.controller) return;
+
+    search.loadingMore = false;
+    search.status = "error";
+    search.errorMessage = error.message;
+    search.retry = () => loadResults(query, page, { record });
     console.error(error);
   }
+
+  render();
 }
 
-async function getMovieDetails(id) {
-  try {
-    showLoader();
+// Entry point for user-initiated and automatic searches.
+// `record` saves the query to Recent Searches (explicit searches only, not typing).
+function startSearch(raw, { record = false } = {}) {
+  const { value, error } = validateQuery(raw);
 
-    const response = await fetch(`${API_URL}&i=${encodeURIComponent(id)}&plot=full`);
+  showHint(error);
+  if (error) return false;
 
-    const movie = await response.json();
+  searchInput.value = value;
+  switchTab("movies");
 
-    hideLoader();
-
-    if (movie.Response === "False") {
-      throw new Error(movie.Error || "Movie not found");
-    }
-
-    modalBody.replaceChildren(
-      el("img", {
-        className: "modal-poster",
-        attrs: { src: posterUrl(movie.Poster), alt: `${clean(movie.Title)} poster` },
-      }),
-      el("div", { className: "modal-info" }, [
-        el("h2", { text: clean(movie.Title) }),
-        detailRow("Plot", movie.Plot),
-        detailRow("Genre", movie.Genre),
-        detailRow("Runtime", movie.Runtime),
-        detailRow("Director", movie.Director),
-        detailRow("Actors", movie.Actors),
-        detailRow("IMDb Rating", movie.imdbRating),
-        detailRow("Release Date", movie.Released),
-        detailRow("Awards", movie.Awards),
-      ])
-    );
-
-    openModal();
-  } catch (error) {
-    hideLoader();
-    console.error(error);
+  const sameQuery = value.toLowerCase() === search.query.toLowerCase();
+  if (sameQuery && search.status === "ready") {
+    // Already showing these results (e.g. the debounced search just finished).
+    if (record) saveSearchHistory(value);
+    return true;
   }
+
+  loadResults(value, 1, { record });
+  return true;
 }
 
-function detailRow(label, value) {
-  return el("p", {}, [el("strong", { text: `${label}: ` }), document.createTextNode(clean(value) || "Not available")]);
+function loadMore() {
+  if (search.status !== "ready" || search.loadingMore) return;
+  loadResults(search.query, search.page + 1);
 }
+
+const debouncedSearch = debounce((raw) => {
+  const { value, error } = validateQuery(raw);
+  if (error) return; // don't nag while the user is still typing
+  startSearch(value);
+}, SEARCH_DEBOUNCE_MS);
 
 /* ===========================
    RENDERING
 =========================== */
+
+function getVisibleMovies() {
+  if (activeTab === "favorites") return getStorage(FAVORITES_KEY);
+  if (activeTab === "watchlist") return getStorage(WATCHLIST_KEY);
+  return search.movies;
+}
+
+// Single place that decides what is on screen for the current tab and state.
+function render() {
+  const onMovies = activeTab === "movies";
+  const movies = getVisibleMovies();
+
+  renderMovies(movies);
+
+  const showLoading = onMovies && (search.status === "loading" || search.loadingMore);
+  const showError = onMovies && search.status === "error";
+  const showEmpty = (onMovies && search.status === "empty") || (!onMovies && movies.length === 0);
+  const hasMore = onMovies && search.status === "ready" && !search.loadingMore && search.page * PAGE_SIZE < search.total;
+
+  loader.classList.toggle("hidden", !showLoading);
+  errorState.classList.toggle("hidden", !showError);
+  emptyState.classList.toggle("hidden", !showEmpty);
+  loadMoreWrap.classList.toggle("hidden", !hasMore);
+
+  if (showError) {
+    errorMessage.textContent = search.errorMessage;
+  }
+  if (showEmpty) {
+    renderEmpty();
+  }
+}
+
+function renderEmpty() {
+  if (activeTab === "favorites") {
+    emptyTitle.textContent = "No favorites yet.";
+    emptyMessage.textContent = "Press Favorite on a movie to save it here.";
+  } else if (activeTab === "watchlist") {
+    emptyTitle.textContent = "Your watchlist is empty.";
+    emptyMessage.textContent = "Press Watchlist on a movie to save it for later.";
+  } else {
+    emptyTitle.textContent = "No movies found.";
+    emptyMessage.textContent =
+      search.message || `Nothing matched "${search.query}". Check the spelling or try another title.`;
+  }
+}
 
 function renderMovies(movies) {
   moviesGrid.replaceChildren();
@@ -253,29 +330,17 @@ function renderMovies(movies) {
     const card = el("article", { className: "movie-card" }, [
       el("img", {
         className: "movie-poster",
-        attrs: { src: posterUrl(movie.Poster), alt: `${clean(movie.Title)} poster` },
+        attrs: { src: posterUrl(movie.poster), alt: `${movie.title} poster` },
       }),
       el("div", { className: "movie-content" }, [
-        el("h3", { className: "movie-title", text: clean(movie.Title) }),
-        el("p", { className: "movie-info", text: `Year: ${clean(movie.Year)}` }),
-        el("p", { className: "movie-info", text: `Type: ${clean(movie.Type)}` }),
-        el("p", { className: "movie-info", text: `IMDb ID: ${clean(movie.imdbID)}` }),
+        el("h3", { className: "movie-title", text: movie.title }),
+        el("p", { className: "movie-info", text: `Year: ${movie.year}` }),
+        el("p", { className: "movie-info", text: `Type: ${movie.type}` }),
+        el("p", { className: "movie-info", text: `IMDb ID: ${movie.id}` }),
         el("div", { className: "movie-actions" }, [
-          el("button", {
-            className: "action-btn details-btn",
-            text: "Details",
-            attrs: { type: "button", "data-id": movie.imdbID },
-          }),
-          el("button", {
-            className: "action-btn favorite-btn",
-            text: "Favorite",
-            attrs: { type: "button", "data-favorite": movie.imdbID },
-          }),
-          el("button", {
-            className: "action-btn watchlist-btn",
-            text: "Watchlist",
-            attrs: { type: "button", "data-watch": movie.imdbID },
-          }),
+          actionButton("details", "Details", movie.id),
+          actionButton("favorite", "Favorite", movie.id),
+          actionButton("watchlist", "Watchlist", movie.id),
         ]),
       ]),
     ]);
@@ -284,48 +349,31 @@ function renderMovies(movies) {
   });
 }
 
+function actionButton(action, label, id) {
+  return el("button", {
+    className: `action-btn ${action}-btn`,
+    text: label,
+    attrs: { type: "button", "data-action": action, "data-id": id },
+  });
+}
+
 /* ===========================
    FAVORITES / WATCHLIST
 =========================== */
 
-function addFavorite(movieId) {
-  const favorites = getStorage(FAVORITES_KEY);
+function addToList(key, movieId) {
+  const list = getStorage(key);
 
-  const movie = currentMovies.find((m) => m.imdbID === movieId);
+  if (list.some((m) => m.id === movieId)) return;
 
+  const movie = getVisibleMovies().find((m) => m.id === movieId);
   if (!movie) return;
 
-  if (favorites.some((m) => m.imdbID === movieId)) return;
+  list.push(movie);
 
-  favorites.push(movie);
-
-  setStorage(FAVORITES_KEY, favorites);
+  setStorage(key, list);
 
   updateCounts();
-}
-
-function renderFavorites() {
-  renderMovies(getStorage(FAVORITES_KEY));
-}
-
-function addWatchlist(movieId) {
-  const watchlist = getStorage(WATCHLIST_KEY);
-
-  const movie = currentMovies.find((m) => m.imdbID === movieId);
-
-  if (!movie) return;
-
-  if (watchlist.some((m) => m.imdbID === movieId)) return;
-
-  watchlist.push(movie);
-
-  setStorage(WATCHLIST_KEY, watchlist);
-
-  updateCounts();
-}
-
-function renderWatchlist() {
-  renderMovies(getStorage(WATCHLIST_KEY));
 }
 
 function updateCounts() {
@@ -339,7 +387,7 @@ function updateCounts() {
 =========================== */
 
 function saveSearchHistory(query) {
-  let history = getStorage(HISTORY_KEY, isString);
+  let history = getStorage(HISTORY_KEY, normalizeString);
 
   history = history.filter((item) => item !== query);
 
@@ -353,7 +401,7 @@ function saveSearchHistory(query) {
 }
 
 function renderSearchHistory() {
-  const history = getStorage(HISTORY_KEY, isString);
+  const history = getStorage(HISTORY_KEY, normalizeString);
 
   searchHistoryContainer.replaceChildren();
 
@@ -365,8 +413,9 @@ function renderSearchHistory() {
     });
 
     btn.addEventListener("click", () => {
+      debouncedSearch.cancel();
       searchInput.value = item;
-      runSearch(item);
+      startSearch(item, { record: true });
     });
 
     searchHistoryContainer.appendChild(btn);
@@ -409,6 +458,8 @@ function toggleTheme() {
    MODAL
 =========================== */
 
+let detailsController = null;
+
 function openModal() {
   movieModal.classList.remove("hidden");
 
@@ -416,9 +467,71 @@ function openModal() {
 }
 
 function closeMovieModal() {
+  detailsController?.abort();
+  detailsController = null;
+
   movieModal.classList.add("hidden");
 
   movieModal.setAttribute("aria-hidden", "true");
+}
+
+async function showDetails(id) {
+  detailsController?.abort();
+  const controller = new AbortController();
+  detailsController = controller;
+
+  modalBody.replaceChildren(
+    el("div", { className: "modal-status", attrs: { role: "status" } }, [
+      el("div", { className: "spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { className: "sr-only", text: "Loading details…" }),
+    ])
+  );
+  openModal();
+
+  try {
+    const movie = await getMovieDetails(id, { signal: controller.signal });
+    if (controller !== detailsController) return;
+
+    modalBody.replaceChildren(
+      el("img", {
+        className: "modal-poster",
+        attrs: { src: posterUrl(movie.poster), alt: `${movie.title} poster` },
+      }),
+      el("div", { className: "modal-info" }, [
+        el("h2", { text: movie.title }),
+        detailRow("Plot", movie.plot),
+        detailRow("Genre", movie.genre),
+        detailRow("Runtime", movie.runtime),
+        detailRow("Director", movie.director),
+        detailRow("Actors", movie.actors),
+        detailRow("IMDb Rating", movie.rating),
+        detailRow("Release Date", movie.released),
+        detailRow("Awards", movie.awards),
+      ])
+    );
+  } catch (error) {
+    if (isAborted(error) || controller !== detailsController) return;
+    console.error(error);
+
+    const retry = el("button", {
+      className: "primary-btn",
+      text: "Try again",
+      attrs: { type: "button" },
+    });
+    retry.addEventListener("click", () => showDetails(id));
+
+    modalBody.replaceChildren(
+      el("div", { className: "modal-status", attrs: { role: "alert" } }, [
+        el("h2", { text: "Couldn't load details." }),
+        el("p", { text: error.message }),
+        retry,
+      ])
+    );
+  }
+}
+
+function detailRow(label, value) {
+  return el("p", {}, [el("strong", { text: `${label}: ` }), document.createTextNode(value || "Not available")]);
 }
 
 /* ===========================
@@ -429,43 +542,31 @@ function switchTab(tab) {
   activeTab = tab;
 
   tabButtons.forEach((btn) => {
-    btn.classList.remove("active");
+    btn.classList.toggle("active", btn.dataset.tab === tab);
   });
 
-  document.querySelector(`[data-tab="${tab}"]`).classList.add("active");
-
-  if (tab === "favorites") {
-    renderFavorites();
-  } else if (tab === "watchlist") {
-    renderWatchlist();
-  } else {
-    renderMovies(currentMovies);
-  }
+  render();
 }
 
 /* ===========================
    EVENTS
 =========================== */
 
-// Validates the raw text, shows a hint when invalid, otherwise searches.
-function runSearch(raw) {
-  const { value, error } = validateQuery(raw);
-
-  showHint(error);
-  if (error) return;
-
-  searchInput.value = value;
-  switchTab("movies");
-  searchMovies(value);
-}
-
 searchForm.addEventListener("submit", (e) => {
   e.preventDefault();
 
-  runSearch(searchInput.value);
+  debouncedSearch.cancel();
+  startSearch(searchInput.value, { record: true });
 });
 
-searchInput.addEventListener("input", () => showHint(""));
+searchInput.addEventListener("input", () => {
+  showHint("");
+  debouncedSearch(searchInput.value);
+});
+
+retryBtn.addEventListener("click", () => search.retry?.());
+
+loadMoreBtn.addEventListener("click", loadMore);
 
 themeToggle.addEventListener("click", toggleTheme);
 
@@ -490,23 +591,14 @@ tabButtons.forEach((btn) => {
 });
 
 moviesGrid.addEventListener("click", (e) => {
-  const detailsId = e.target.dataset.id;
+  const button = e.target.closest("button[data-action]");
+  if (!button) return;
 
-  const favoriteId = e.target.dataset.favorite;
+  const { action, id } = button.dataset;
 
-  const watchId = e.target.dataset.watch;
-
-  if (detailsId) {
-    getMovieDetails(detailsId);
-  }
-
-  if (favoriteId) {
-    addFavorite(favoriteId);
-  }
-
-  if (watchId) {
-    addWatchlist(watchId);
-  }
+  if (action === "details") showDetails(id);
+  if (action === "favorite") addToList(FAVORITES_KEY, id);
+  if (action === "watchlist") addToList(WATCHLIST_KEY, id);
 });
 
 function init() {
@@ -516,7 +608,7 @@ function init() {
 
   renderSearchHistory();
 
-  searchMovies("Avengers");
+  loadResults("Avengers", 1, { record: true });
 }
 
 init();

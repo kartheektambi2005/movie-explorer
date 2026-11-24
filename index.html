@@ -145,37 +145,65 @@
         </div>
     </section>
 
-    <!-- Loading -->
-    <section
-        id="loader"
-        class="loader hidden"
-    >
-        <div class="spinner"></div>
-    </section>
-
-    <!-- Error -->
-    <section
-        id="errorState"
-        class="message hidden"
-    >
-        <h2>Something went wrong.</h2>
-    </section>
-
-    <!-- Empty -->
-    <section
-        id="emptyState"
-        class="message hidden"
-    >
-        <h2>No movies found.</h2>
-    </section>
-
-    <!-- Movies -->
+    <!-- Results -->
     <main class="container">
 
         <div
             id="moviesGrid"
             class="movies-grid"
         ></div>
+
+        <!-- Loading -->
+        <section
+            id="loader"
+            class="loader hidden"
+            role="status"
+            aria-live="polite"
+        >
+            <div class="spinner" aria-hidden="true"></div>
+            <span class="sr-only">Loading&hellip;</span>
+        </section>
+
+        <!-- Error -->
+        <section
+            id="errorState"
+            class="message hidden"
+            role="alert"
+        >
+            <h2>Something went wrong.</h2>
+            <p id="errorMessage"></p>
+            <button
+                id="retryBtn"
+                class="primary-btn"
+                type="button"
+            >
+                Try again
+            </button>
+        </section>
+
+        <!-- Empty -->
+        <section
+            id="emptyState"
+            class="message hidden"
+            role="status"
+        >
+            <h2 id="emptyTitle">No movies found.</h2>
+            <p id="emptyMessage"></p>
+        </section>
+
+        <!-- Pagination -->
+        <div
+            id="loadMoreWrap"
+            class="load-more-wrap hidden"
+        >
+            <button
+                id="loadMoreBtn"
+                class="primary-btn"
+                type="button"
+            >
+                Load more
+            </button>
+        </div>
 
     </main>
 
