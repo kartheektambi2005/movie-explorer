@@ -36,6 +36,7 @@ export const MOVIE_FIELDS = [
   "director",
   "released",
   "awards",
+  "language",
 ];
 
 // OMDb uses the literal string "N/A" for missing values.
@@ -57,6 +58,7 @@ export function fromOmdb(raw) {
     director: clean(raw.Director),
     released: clean(raw.Released),
     awards: clean(raw.Awards),
+    language: clean(raw.Language),
   };
 }
 
@@ -137,14 +139,24 @@ export async function searchMovies(query, { page = 1, signal } = {}) {
   };
 }
 
-/** Fetches full details (plot, cast, runtime, rating, genre...) for one movie. */
-export async function getMovieDetails(id, { signal } = {}) {
-  const data = await request({ i: id, plot: "full" }, { signal });
+// Full-detail lookup shared by the id and title variants.
+async function fetchFullDetails(params, signal) {
+  const data = await request({ ...params, plot: "full" }, { signal });
 
   if (data.Response === "False") {
     throw new ApiError(data.Error || "Movie not found.", "api");
   }
-  return { ...fromOmdb(data), id };
+  return fromOmdb(data);
+}
+
+/** Fetches full details (plot, cast, runtime, rating, genre...) for one movie. */
+export async function getMovieDetails(id, { signal } = {}) {
+  return { ...(await fetchFullDetails({ i: id }, signal)), id };
+}
+
+/** Looks a movie up by exact title and release year (used by the home banner). */
+export function getMovieByTitle(title, year, { signal } = {}) {
+  return fetchFullDetails({ t: title, y: year }, signal);
 }
 
 const MAX_PARALLEL_DETAILS = 3;

@@ -63,7 +63,7 @@ export function el(tag, { className, text, attrs } = {}, children = []) {
   return node;
 }
 
-function isHttpUrl(value) {
+export function isHttpUrl(value) {
   try {
     const { protocol } = new URL(value);
     return protocol === "https:" || protocol === "http:";
@@ -74,7 +74,7 @@ function isHttpUrl(value) {
 
 // Poster image that falls back to a local placeholder when OMDb has no poster
 // ("N/A") or the image fails to load.
-function createPoster(movie, className) {
+export function createPoster(movie, className) {
   const hasPoster = isHttpUrl(movie.poster);
 
   const img = el("img", {

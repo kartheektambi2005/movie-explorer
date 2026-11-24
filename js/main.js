@@ -32,6 +32,7 @@ import {
   showModalMovie,
 } from "./ui.js";
 import { validateQuery, debounce } from "./utils.js";
+import { initBanner } from "./banner.js";
 
 const DEFAULT_QUERY = "Avengers"; // shown on first load; not saved to Recent Searches
 const SEARCH_DEBOUNCE_MS = 500;
@@ -337,6 +338,8 @@ function init() {
 
   switchTab(getSavedTab());
   ensureMoviesLoaded();
+
+  initBanner({ onLoaded: (movies) => movies.forEach(applyDetails), onDetails: showDetails });
 }
 
 init();

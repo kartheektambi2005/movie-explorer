@@ -3,13 +3,14 @@
 Search movies and series, read the details, and keep your own Favorites and Watchlist, all in the browser.
 Built with plain HTML, CSS and JavaScript (ES modules) on top of the [OMDb API](https://www.omdbapi.com/).
 
-**Live demo:** https://kartheektambi2005.github.io/movie-explorer/
+**Live demo:** _add your Vercel URL here after the first deploy._
 
 > **Screenshot:** _coming soon._ Add one at `docs/screenshot.png` and replace this line with
 > `![Movie Explorer](docs/screenshot.png)`.
 
 ## Features
 
+- **Home banner:** a slideshow of four recent Indian releases that advances by itself every 2 seconds. It pauses on hover, on keyboard focus and with a pause button, has clickable dots, opens the details modal, and starts paused for visitors who prefer reduced motion.
 - **Search** by title with a debounced search-as-you-type, input trimming and validation, and stale requests cancelled with `AbortController`.
 - **"Load more"** pagination (OMDb returns 10 results per page).
 - **Every state is visible:** loading spinner, "no results", network/API error with a **Try again** button, and an invalid-search hint.
@@ -31,7 +32,7 @@ Built with plain HTML, CSS and JavaScript (ES modules) on top of the [OMDb API](
 | Logic     | Vanilla JavaScript (ES2020+ modules), no frameworks or build step |
 | Data      | OMDb REST API via `fetch` with timeout and `AbortController`   |
 | Storage   | `localStorage` (favorites, watchlist, history, theme, tab)     |
-| Hosting   | GitHub Pages (static files)                                    |
+| Hosting   | Any static host: Vercel or GitHub Pages (no build step)        |
 
 ## Project structure
 
@@ -42,6 +43,8 @@ css/
 assets/           favicon and fallback poster
 js/
   config.js       OMDb API key and base URL: the only place the key lives
+  featured.js     the four movies in the home banner and the slide duration (edit to change them)
+  banner.js       home banner slideshow (auto-advance, pause, dots)
   api.js          OMDb client: timeout, cancellation, error types, queued details lookups
   storage.js      safe localStorage reads/writes (never throws, tolerates corrupted data)
   state.js        in-memory app state and small data helpers
@@ -72,6 +75,13 @@ without a backend. Keep that in mind:
 - Cards load their rating and genre as they scroll into view (one extra request per card), so a page of
   results can use around 10 to 20 requests. Keep the 1,000/day free quota in mind.
 
+## Change the banner movies
+
+OMDb has no "released recently in India" filter, so the banner uses a short hand-maintained list in
+[`js/featured.js`](js/featured.js). Edit the titles and years (they must match the OMDb listing) to feature newer
+releases, and change `BANNER_SLIDE_MS` to change how long each slide stays (default 2000 ms). Each banner load
+costs one OMDb request per slide.
+
 ## Run locally
 
 The app uses ES modules, which browsers will not load from `file://`, so serve the folder over HTTP:
@@ -88,11 +98,22 @@ npx serve .
 
 Then open <http://localhost:8000>.
 
-## Deploy to GitHub Pages
+## Deploy
+
+The project is plain static files with no build step, so it deploys as is. All asset paths are relative.
+
+### Vercel
 
 1. Push the repository to GitHub.
-2. Go to **Settings, Pages**, choose **Deploy from a branch**, pick `main` and `/ (root)`, then save.
-3. After a minute the site is live at `https://<your-username>.github.io/movie-explorer/`.
+2. In Vercel choose **Add New, Project** and import the repository.
+3. Leave **Framework Preset** as **Other**, and leave **Build Command** and **Output Directory** empty
+   (Vercel serves the repository root, where `index.html` lives).
+4. Click **Deploy**. Every later push to `main` redeploys automatically.
+
+### GitHub Pages
+
+1. Go to **Settings, Pages**, choose **Deploy from a branch**, pick `main` and `/ (root)`, then save.
+2. After a minute the site is live at `https://<your-username>.github.io/movie-explorer/`.
 
 ## Credits
 
