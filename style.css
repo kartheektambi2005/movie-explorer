@@ -146,6 +146,12 @@ img {
 
 
 
+.search-hint {
+    margin-top: 10px;
+    color: var(--danger);
+    font-size: .9rem;
+}
+
 .history-wrapper {
     margin-top: 20px;
 }
@@ -421,9 +427,13 @@ img {
 .footer{
     text-align:center;
     padding:12px;
-    color:brightgray;
+    color:#d1d5db;
     font-size:13px;
     background:#111;
+}
+
+.footer a {
+    color: #93c5fd;
 }
 
 @keyframes spin {
