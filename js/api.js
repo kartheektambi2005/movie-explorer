@@ -21,6 +21,23 @@ export class ApiError extends Error {
 
 export const isAborted = (error) => error instanceof ApiError && error.kind === "aborted";
 
+/** Fields of the app's movie shape. Missing values are empty strings. */
+export const MOVIE_FIELDS = [
+  "id",
+  "title",
+  "year",
+  "type",
+  "poster",
+  "genre",
+  "rating",
+  "runtime",
+  "plot",
+  "actors",
+  "director",
+  "released",
+  "awards",
+];
+
 // OMDb uses the literal string "N/A" for missing values.
 const clean = (value) => (value && value !== "N/A" ? String(value) : "");
 
@@ -128,4 +145,44 @@ export async function getMovieDetails(id, { signal } = {}) {
     throw new ApiError(data.Error || "Movie not found.", "api");
   }
   return { ...fromOmdb(data), id };
+}
+
+const MAX_PARALLEL_DETAILS = 3;
+const detailQueue = [];
+let activeDetailRequests = 0;
+
+/**
+ * Low-priority details lookup used to fill in card ratings: at most three requests
+ * are in flight, and a queued job is skipped (resolves null) if `isNeeded()` is
+ * false by the time it reaches the front (e.g. its card was scrolled away or replaced).
+ */
+export function queueMovieDetails(id, { isNeeded = () => true, isKnown = () => null } = {}) {
+  return new Promise((resolve, reject) => {
+    detailQueue.push({ id, isNeeded, isKnown, resolve, reject });
+    pumpDetailQueue();
+  });
+}
+
+function pumpDetailQueue() {
+  while (activeDetailRequests < MAX_PARALLEL_DETAILS && detailQueue.length) {
+    const job = detailQueue.shift();
+
+    const known = job.isKnown(job.id);
+    if (known) {
+      job.resolve(known);
+      continue;
+    }
+    if (!job.isNeeded()) {
+      job.resolve(null);
+      continue;
+    }
+
+    activeDetailRequests++;
+    getMovieDetails(job.id)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeDetailRequests--;
+        pumpDetailQueue();
+      });
+  }
 }

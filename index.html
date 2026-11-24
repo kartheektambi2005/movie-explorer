@@ -7,7 +7,48 @@
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>Movie-Explorer</title>
+    <title>Movie Explorer – Search movies, save favorites and a watchlist</title>
+
+    <meta
+        name="description"
+        content="Search millions of movies and series with the OMDb API. Read plots, cast and IMDb ratings, and keep your favorites and watchlist in your browser."
+    >
+    <meta
+        name="theme-color"
+        content="#1d4ed8"
+    >
+    <meta
+        property="og:title"
+        content="Movie Explorer"
+    >
+    <meta
+        property="og:description"
+        content="Search movies, read details and keep your favorites and watchlist."
+    >
+    <meta
+        property="og:type"
+        content="website"
+    >
+
+    <link
+        rel="icon"
+        type="image/svg+xml"
+        href="./assets/favicon.svg"
+    >
+
+    <!-- Apply the saved (or system) theme before first paint so there is no flash. -->
+    <script>
+        (function () {
+            var theme = null;
+            try {
+                theme = localStorage.getItem("movie_theme");
+            } catch (e) { /* storage unavailable */ }
+            if (theme !== "dark" && theme !== "light") {
+                theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            document.documentElement.dataset.theme = theme;
+        })();
+    </script>
 
     <link
         rel="stylesheet"
@@ -32,193 +73,263 @@
 </head>
 <body>
 
-    <!-- Header -->
-    <header class="header">
-        <div class="container header-content">
+    <a
+        class="skip-link"
+        href="#main"
+    >
+        Skip to results
+    </a>
 
-            <h1 class="logo">
-                🎬 Movie-Explorer 
-                
-            </h1>
+    <!-- Everything except the modal and toasts; made inert while the modal is open. -->
+    <div id="app">
 
-            <button
-                id="themeToggle"
-                class="theme-btn"
-                aria-label="Toggle Theme"
-            >
-                🌙
-            </button>
+        <!-- Header -->
+        <header class="header">
+            <div class="container header-content">
 
-        </div>
-    </header>
+                <h1 class="logo">
+                    <span aria-hidden="true">🎬</span> Movie Explorer
+                </h1>
 
-    <!-- Search -->
-    <section class="search-section">
-        <div class="container">
-
-            <form
-                id="searchForm"
-                class="search-form"
-                novalidate
-            >
-
-                <input
-                    type="text"
-                    id="searchInput"
-                    placeholder="Search movies..."
-                    autocomplete="off"
-                    maxlength="100"
-                    aria-describedby="searchHint"
+                <button
+                    id="themeToggle"
+                    class="theme-btn"
+                    type="button"
+                    aria-label="Switch to dark theme"
                 >
-
-                <button type="submit">
-                    Search
+                    🌙
                 </button>
 
-            </form>
+            </div>
+        </header>
 
-            <p
-                id="searchHint"
-                class="search-hint hidden"
-                role="alert"
-            ></p>
+        <!-- Search -->
+        <section
+            class="search-section"
+            aria-label="Search"
+        >
+            <div class="container">
 
-            <!-- Search History -->
-            <div
-                id="historyWrapper"
-                class="history-wrapper hidden"
-            >
-                <div class="history-header">
-                    <h3>Recent Searches</h3>
+                <form
+                    id="searchForm"
+                    class="search-form"
+                    role="search"
+                    novalidate
+                >
 
-                    <button
-                        id="clearHistoryBtn"
-                        class="link-btn"
-                        type="button"
+                    <label
+                        for="searchInput"
+                        class="sr-only"
                     >
-                        Clear
+                        Search movies by title
+                    </label>
+
+                    <input
+                        type="search"
+                        id="searchInput"
+                        placeholder="Search movies, e.g. Inception"
+                        autocomplete="off"
+                        maxlength="100"
+                        aria-describedby="searchHint"
+                    >
+
+                    <button type="submit">
+                        Search
                     </button>
+
+                </form>
+
+                <p
+                    id="searchHint"
+                    class="search-hint hidden"
+                    role="alert"
+                ></p>
+
+                <!-- Search History -->
+                <div
+                    id="historyWrapper"
+                    class="history-wrapper hidden"
+                >
+                    <div class="history-header">
+                        <h2>Recent Searches</h2>
+
+                        <button
+                            id="clearHistoryBtn"
+                            class="link-btn"
+                            type="button"
+                        >
+                            Clear
+                        </button>
+                    </div>
+
+                    <div
+                        id="searchHistory"
+                        class="history-list"
+                    ></div>
                 </div>
 
+            </div>
+        </section>
+
+        <!-- Stats -->
+        <section
+            class="stats-section"
+            aria-label="Your lists"
+        >
+            <div class="container stats-grid">
+
+                <div class="stat-card">
+                    <h2>Favorites</h2>
+                    <p
+                        id="favoriteCount"
+                        aria-live="polite"
+                    >0</p>
+                </div>
+
+                <div class="stat-card">
+                    <h2>Watchlist</h2>
+                    <p
+                        id="watchlistCount"
+                        aria-live="polite"
+                    >0</p>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Tabs -->
+        <nav
+            class="tabs-section"
+            aria-label="Movie lists"
+        >
+            <div class="container">
+
+                <div class="tabs">
+
+                    <button
+                        class="tab-btn active"
+                        type="button"
+                        data-tab="movies"
+                        aria-pressed="true"
+                    >
+                        Movies
+                    </button>
+
+                    <button
+                        class="tab-btn"
+                        type="button"
+                        data-tab="favorites"
+                        aria-pressed="false"
+                    >
+                        Favorites
+                    </button>
+
+                    <button
+                        class="tab-btn"
+                        type="button"
+                        data-tab="watchlist"
+                        aria-pressed="false"
+                    >
+                        Watchlist
+                    </button>
+
+                </div>
+
+            </div>
+        </nav>
+
+        <!-- Results -->
+        <main
+            id="main"
+            class="container"
+            tabindex="-1"
+        >
+
+            <h2 class="sr-only">Results</h2>
+
+            <p
+                id="resultsSummary"
+                class="results-summary hidden"
+                role="status"
+                aria-live="polite"
+            ></p>
+
+            <div
+                id="moviesGrid"
+                class="movies-grid"
+            ></div>
+
+            <!-- Loading -->
+            <section
+                id="loader"
+                class="loader hidden"
+                role="status"
+                aria-live="polite"
+            >
                 <div
-                    id="searchHistory"
-                    class="history-list"
+                    class="spinner"
+                    aria-hidden="true"
                 ></div>
-            </div>
+                <span class="sr-only">Loading&hellip;</span>
+            </section>
 
-        </div>
-    </section>
-
-    <!-- Stats -->
-    <section class="stats-section">
-        <div class="container stats-grid">
-
-            <div class="stat-card">
-                <h3>Favorites</h3>
-                <p id="favoriteCount" aria-live="polite">0</p>
-            </div>
-
-            <div class="stat-card">
-                <h3>Watchlist</h3>
-                <p id="watchlistCount" aria-live="polite">0</p>
-            </div>
-
-        </div>
-    </section>
-
-    <!-- Tabs -->
-    <section class="tabs-section">
-        <div class="container">
-
-            <div class="tabs">
-
-                <button
-                    class="tab-btn active"
-                    data-tab="movies"
-                >
-                    Movies
-                </button>
-
-                <button
-                    class="tab-btn"
-                    data-tab="favorites"
-                >
-                    Favorites
-                </button>
-
-                <button
-                    class="tab-btn"
-                    data-tab="watchlist"
-                >
-                    Watchlist
-                </button>
-
-            </div>
-
-        </div>
-    </section>
-
-    <!-- Results -->
-    <main class="container">
-
-        <div
-            id="moviesGrid"
-            class="movies-grid"
-        ></div>
-
-        <!-- Loading -->
-        <section
-            id="loader"
-            class="loader hidden"
-            role="status"
-            aria-live="polite"
-        >
-            <div class="spinner" aria-hidden="true"></div>
-            <span class="sr-only">Loading&hellip;</span>
-        </section>
-
-        <!-- Error -->
-        <section
-            id="errorState"
-            class="message hidden"
-            role="alert"
-        >
-            <h2>Something went wrong.</h2>
-            <p id="errorMessage"></p>
-            <button
-                id="retryBtn"
-                class="primary-btn"
-                type="button"
+            <!-- Error -->
+            <section
+                id="errorState"
+                class="message hidden"
+                role="alert"
             >
-                Try again
-            </button>
-        </section>
+                <h2>Something went wrong.</h2>
+                <p id="errorMessage"></p>
+                <button
+                    id="retryBtn"
+                    class="primary-btn"
+                    type="button"
+                >
+                    Try again
+                </button>
+            </section>
 
-        <!-- Empty -->
-        <section
-            id="emptyState"
-            class="message hidden"
-            role="status"
-        >
-            <h2 id="emptyTitle">No movies found.</h2>
-            <p id="emptyMessage"></p>
-        </section>
-
-        <!-- Pagination -->
-        <div
-            id="loadMoreWrap"
-            class="load-more-wrap hidden"
-        >
-            <button
-                id="loadMoreBtn"
-                class="primary-btn"
-                type="button"
+            <!-- Empty -->
+            <section
+                id="emptyState"
+                class="message hidden"
+                role="status"
             >
-                Load more
-            </button>
-        </div>
+                <h2 id="emptyTitle">No movies found.</h2>
+                <p id="emptyMessage"></p>
+            </section>
 
-    </main>
+            <!-- Pagination -->
+            <div
+                id="loadMoreWrap"
+                class="load-more-wrap hidden"
+            >
+                <button
+                    id="loadMoreBtn"
+                    class="primary-btn"
+                    type="button"
+                >
+                    Load more
+                </button>
+            </div>
+
+            <noscript>
+                <p class="message">Movie Explorer needs JavaScript to search movies.</p>
+            </noscript>
+
+        </main>
+
+        <footer class="footer">
+            &copy; 2026 Movie Explorer by Tambi Kartheek. Data from
+            <a
+                href="https://www.omdbapi.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+            >OMDb API</a>.
+        </footer>
+
+    </div>
 
     <!-- Movie Details Modal -->
     <div
@@ -238,11 +349,10 @@
                 id="closeModal"
                 class="close-btn"
                 type="button"
-                aria-label="Close Modal"
+                aria-label="Close details"
             >
-                &times;
+                <span aria-hidden="true">&times;</span>
             </button>
-
 
             <div
                 id="modalBody"
@@ -252,6 +362,7 @@
         </div>
 
     </div>
+
     <!-- Toast messages -->
     <div
         id="toastRegion"
@@ -260,16 +371,10 @@
         aria-live="polite"
     ></div>
 
-    <footer class="footer">
-        &copy; 2026 Movie-Explorer by Tambi Kartheek. Data from
-        <a
-            href="https://www.omdbapi.com/"
-            target="_blank"
-            rel="noopener noreferrer"
-        >OMDb API</a>.
-    </footer>
-
-    <script type="module" src="./app.js"></script>
+    <script
+        type="module"
+        src="./js/main.js"
+    ></script>
 
 </body>
 </html>
